@@ -52,7 +52,8 @@ class PadView(c: Context, val ip: String, val slot: Int) : View(c) {
             Btn("X", cx - d, cy, r, 0x4000), Btn("Y", cx, cy - d, r, 0x8000),
             Btn("LB", w * 0.1f, h * 0.15f, r, 0x0100), Btn("RB", w * 0.9f, h * 0.15f, r, 0x0200),
             Btn("LT", w * 0.25f, h * 0.15f, r, 0x10000), Btn("RT", w * 0.75f, h * 0.15f, r, 0x20000),
-            Btn("<", w * 0.42f, h * 0.15f, r * 0.8f, 0x0020), Btn(">", w * 0.58f, h * 0.15f, r * 0.8f, 0x0010)
+           Btn("<", w * 0.42f, h * 0.15f, r * 0.8f, 0x0020), Btn(">", w * 0.58f, h * 0.15f, r * 0.8f, 0x0010),
+           Btn("LS", w * 0.40f, h * 0.80f, r, 0x0040)
         )
     }
 
