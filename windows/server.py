@@ -15,12 +15,13 @@ print(f"Ready with {N} pads. Phones connect to this PC's IP, port 5005.")
 while True:
     d, _ = s.recvfrom(256)
     try:
-        slot, m, lx, ly = d.decode().strip().split(";")
+        slot, m, lx, ly, rx, ry = d.decode().strip().split(";")
         p = pads[int(slot) - 1]; m = int(m)
     except Exception:
         continue
     p.report.wButtons = m & 0xFFFF
     p.left_joystick_float(float(lx), float(ly))
+    p.right_joystick_float(float(rx), float(ry))
     p.left_trigger_float(1.0 if m & 0x10000 else 0.0)
     p.right_trigger_float(1.0 if m & 0x20000 else 0.0)
     p.update()

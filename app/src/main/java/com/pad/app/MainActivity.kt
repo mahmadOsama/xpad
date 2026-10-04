@@ -38,55 +38,89 @@ class PadView(c: Context, val ip: String, val slot: Int) : View(c) {
     private val ex = Executors.newSingleThreadExecutor()
     private val sock = DatagramSocket()
     private var btns = listOf<Btn>()
-    private var sx = 0f; private var sy = 0f; private var sr = 0f
-    private var kx = 0f; private var ky = 0f
+    private var lcx = 0f; private var lcy = 0f
+    private var rcx = 0f; private var rcy = 0f
+    private var sr = 0f
+    private var lkx = 0f; private var lky = 0f
+    private var rkx = 0f; private var rky = 0f
+    private var lid = -1; private var rid = -1
     private var mask = 0
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
     private var last = ""
 
+    private fun dist(x1: Float, y1: Float, x2: Float, y2: Float): Float =
+        Math.hypot((x1 - x2).toDouble(), (y1 - y2).toDouble()).toFloat()
+
     override fun onSizeChanged(w: Int, h: Int, a: Int, b: Int) {
-        sr = h * 0.22f; sx = w * 0.17f; sy = h * 0.68f; kx = sx; ky = sy
-        val r = h * 0.1f; val cx = w * 0.82f; val cy = h * 0.68f; val d = r * 1.7f
+        sr = h * 0.2f
+        lcx = w * 0.12f; lcy = h * 0.68f; lkx = lcx; lky = lcy
+        rcx = w * 0.62f; rcy = h * 0.68f; rkx = rcx; rky = rcy
+        val r = h * 0.09f
+        val ax = w * 0.87f; val ay = h * 0.62f; val d = r * 1.7f
+        val dx = w * 0.36f; val dy = h * 0.70f; val dr = r * 0.8f; val dd = dr * 1.9f
         btns = listOf(
-            Btn("A", cx, cy + d, r, 0x1000), Btn("B", cx + d, cy, r, 0x2000),
-            Btn("X", cx - d, cy, r, 0x4000), Btn("Y", cx, cy - d, r, 0x8000),
-            Btn("LB", w * 0.1f, h * 0.15f, r, 0x0100), Btn("RB", w * 0.9f, h * 0.15f, r, 0x0200),
-            Btn("LT", w * 0.25f, h * 0.15f, r, 0x10000), Btn("RT", w * 0.75f, h * 0.15f, r, 0x20000),
-           Btn("<", w * 0.42f, h * 0.15f, r * 0.8f, 0x0020), Btn(">", w * 0.58f, h * 0.15f, r * 0.8f, 0x0010),
-           Btn("LS", w * 0.40f, h * 0.80f, r, 0x0040)
+            Btn("A", ax, ay + d, r, 0x1000), Btn("B", ax + d, ay, r, 0x2000),
+            Btn("X", ax - d, ay, r, 0x4000), Btn("Y", ax, ay - d, r, 0x8000),
+            Btn("LB", w * 0.10f, h * 0.12f, r, 0x0100), Btn("RB", w * 0.90f, h * 0.12f, r, 0x0200),
+            Btn("LT", w * 0.24f, h * 0.12f, r, 0x10000), Btn("RT", w * 0.76f, h * 0.12f, r, 0x20000),
+            Btn("<", w * 0.42f, h * 0.12f, r * 0.8f, 0x0020), Btn(">", w * 0.58f, h * 0.12f, r * 0.8f, 0x0010),
+            Btn("LS", w * 0.12f, h * 0.30f, r * 0.8f, 0x0040),
+            Btn("RS", w * 0.62f, h * 0.30f, r * 0.8f, 0x0080),
+            Btn("^", dx, dy - dd, dr, 0x0001), Btn("v", dx, dy + dd, dr, 0x0002),
+            Btn("<", dx - dd, dy, dr, 0x0004), Btn(">", dx + dd, dy, dr, 0x0008)
         )
     }
 
     override fun onDraw(c: Canvas) {
         c.drawColor(Color.rgb(17, 17, 17))
-        p.color = Color.rgb(50, 50, 50); c.drawCircle(sx, sy, sr, p)
-        p.color = Color.GRAY; c.drawCircle(kx, ky, sr * 0.4f, p)
-        p.textSize = 40f; p.textAlign = Paint.Align.CENTER
+        p.color = Color.rgb(50, 50, 50)
+        c.drawCircle(lcx, lcy, sr, p); c.drawCircle(rcx, rcy, sr, p)
+        p.color = Color.GRAY
+        c.drawCircle(lkx, lky, sr * 0.4f, p); c.drawCircle(rkx, rky, sr * 0.4f, p)
+        p.textSize = 36f; p.textAlign = Paint.Align.CENTER
         for (b in btns) {
             p.color = if ((mask and b.m) != 0) Color.rgb(0, 150, 90) else Color.rgb(70, 70, 70)
             c.drawCircle(b.x, b.y, b.r, p)
-            p.color = Color.WHITE; c.drawText(b.t, b.x, b.y + 14f, p)
+            p.color = Color.WHITE; c.drawText(b.t, b.x, b.y + 12f, p)
         }
     }
 
     override fun onTouchEvent(e: MotionEvent): Boolean {
-        var m = 0; var lx = 0f; var ly = 0f
-        kx = sx; ky = sy
-        val up = e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL
+        val act = e.actionMasked
+        if (act == MotionEvent.ACTION_DOWN || act == MotionEvent.ACTION_POINTER_DOWN) {
+            val i = e.actionIndex; val x = e.getX(i); val y = e.getY(i); val id = e.getPointerId(i)
+            if (lid == -1 && dist(x, y, lcx, lcy) < sr * 1.4f) lid = id
+            else if (rid == -1 && dist(x, y, rcx, rcy) < sr * 1.4f) rid = id
+        }
+        val up = act == MotionEvent.ACTION_UP || act == MotionEvent.ACTION_CANCEL
+        if (up) { lid = -1; rid = -1 }
+        else if (act == MotionEvent.ACTION_POINTER_UP) {
+            val id = e.getPointerId(e.actionIndex)
+            if (id == lid) lid = -1
+            if (id == rid) rid = -1
+        }
+        var m = 0
+        var lx = 0f; var ly = 0f; var rx = 0f; var ry = 0f
+        lkx = lcx; lky = lcy; rkx = rcx; rky = rcy
         if (!up) for (i in 0 until e.pointerCount) {
-            if (e.actionMasked == MotionEvent.ACTION_POINTER_UP && i == e.actionIndex) continue
+            if (act == MotionEvent.ACTION_POINTER_UP && i == e.actionIndex) continue
+            val id = e.getPointerId(i)
             val x = e.getX(i); val y = e.getY(i)
-            val dx = x - sx; val dy = y - sy
-            val d = Math.hypot(dx.toDouble(), dy.toDouble()).toFloat()
-            if (d < sr * 1.8f) {
+            if (id == lid) {
+                val dx = x - lcx; val dy = y - lcy; val d = dist(x, y, lcx, lcy)
                 val k = if (d > sr) sr / d else 1f
-                kx = sx + dx * k; ky = sy + dy * k
+                lkx = lcx + dx * k; lky = lcy + dy * k
                 lx = dx * k / sr; ly = -dy * k / sr
+            } else if (id == rid) {
+                val dx = x - rcx; val dy = y - rcy; val d = dist(x, y, rcx, rcy)
+                val k = if (d > sr) sr / d else 1f
+                rkx = rcx + dx * k; rky = rcy + dy * k
+                rx = dx * k / sr; ry = -dy * k / sr
             } else for (b in btns)
-                if (Math.hypot((x - b.x).toDouble(), (y - b.y).toDouble()) < b.r * 1.3) m = m or b.m
+                if (dist(x, y, b.x, b.y) < b.r * 1.3f) m = m or b.m
         }
         mask = m; invalidate()
-        val msg = "$slot;$m;$lx;$ly"
+        val msg = "$slot;$m;$lx;$ly;$rx;$ry"
         if (msg != last) {
             last = msg
             ex.execute { try {
