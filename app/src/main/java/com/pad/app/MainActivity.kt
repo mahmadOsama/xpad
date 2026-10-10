@@ -1,6 +1,7 @@
 package com.pad.app
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.graphics.*
 import android.os.Build
 import android.os.Bundle
@@ -10,6 +11,9 @@ import android.text.InputType
 import android.view.*
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
@@ -22,6 +26,8 @@ class Cfg(
 
 class MainActivity : AppCompatActivity() {
     private var padActive = false
+    private var editing = false
+    private var lastBack = 0L
 
     override fun onCreate(s: Bundle?) {
         super.onCreate(s)
@@ -29,10 +35,40 @@ class MainActivity : AppCompatActivity() {
         showMenu()
     }
 
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus && padActive) applyFullscreen(true)
+    }
+
+    private fun applyFullscreen(on: Boolean) {
+        WindowCompat.setDecorFitsSystemWindows(window, !on)
+        val ctl = WindowInsetsControllerCompat(window, window.decorView)
+        if (on) {
+            ctl.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            ctl.hide(WindowInsetsCompat.Type.systemBars())
+        } else {
+            ctl.show(WindowInsetsCompat.Type.systemBars())
+        }
+        if (Build.VERSION.SDK_INT >= 28) {
+            val lp = window.attributes
+            lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            window.attributes = lp
+        }
+    }
+
     private fun label(t: String) = TextView(this).apply { text = t; setPadding(0, 24, 0, 0) }
+
+    private fun startPad(cfg: Cfg, edit: Boolean) {
+        padActive = true
+        editing = edit
+        setContentView(PadView(this, cfg, getSharedPreferences("p", MODE_PRIVATE), edit))
+        applyFullscreen(true)
+    }
 
     private fun showMenu() {
         padActive = false
+        editing = false
+        applyFullscreen(false)
         val prefs = getSharedPreferences("p", MODE_PRIVATE)
         val ip = EditText(this).apply { hint = "auto"; setText(prefs.getString("ip", "")) }
         val slot = EditText(this).apply {
@@ -45,9 +81,11 @@ class MainActivity : AppCompatActivity() {
         val opac = bar(60, prefs.getInt("opac", 60))
         val dead = bar(30, prefs.getInt("dead", 8))
         val vib = CheckBox(this).apply { text = "Vibration"; isChecked = prefs.getBoolean("vib", true) }
-        val lefty = CheckBox(this).apply { text = "Left-handed (mirror layout)"; isChecked = prefs.getBoolean("lefty", false) }
+        val lefty = CheckBox(this).apply { text = "Left-handed (mirrors the default layout)"; isChecked = prefs.getBoolean("lefty", false) }
         val floating = CheckBox(this).apply { text = "Floating sticks"; isChecked = prefs.getBoolean("floating", false) }
         val go = Button(this).apply { text = "Connect" }
+        val editBtn = Button(this).apply { text = "Edit layout (drag buttons)" }
+        val resetBtn = Button(this).apply { text = "Reset layout" }
 
         val col = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -58,11 +96,11 @@ class MainActivity : AppCompatActivity() {
             addView(label("Opacity")); addView(opac)
             addView(label("Stick dead zone")); addView(dead)
             addView(vib); addView(lefty); addView(floating)
-            addView(go)
+            addView(go); addView(editBtn); addView(resetBtn)
         }
         setContentView(ScrollView(this).apply { addView(col) })
 
-        go.setOnClickListener {
+        fun commit(): Cfg {
             val n = slot.text.toString().toIntOrNull() ?: 1
             val ipText = ip.text.toString().trim()
             prefs.edit()
@@ -70,29 +108,37 @@ class MainActivity : AppCompatActivity() {
                 .putInt("size", size.progress).putInt("opac", opac.progress).putInt("dead", dead.progress)
                 .putBoolean("vib", vib.isChecked).putBoolean("lefty", lefty.isChecked)
                 .putBoolean("floating", floating.isChecked).apply()
-            val cfg = Cfg(
+            return Cfg(
                 ipText, n, (70 + size.progress) / 100f, (40 + opac.progress) / 100f,
                 dead.progress / 100f, vib.isChecked, lefty.isChecked, floating.isChecked
             )
-            padActive = true
-            setContentView(PadView(this, cfg))
-            @Suppress("DEPRECATION")
-            window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN or
-                View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+        }
+
+        go.setOnClickListener { startPad(commit(), false) }
+        editBtn.setOnClickListener { startPad(commit(), true) }
+        resetBtn.setOnClickListener {
+            val ed = prefs.edit()
+            for (k in prefs.all.keys) if (k.startsWith("lay_")) ed.remove(k)
+            ed.apply()
+            Toast.makeText(this, "Layout reset", Toast.LENGTH_SHORT).show()
         }
     }
 
     @Suppress("DEPRECATION")
     override fun onBackPressed() {
-        if (padActive) {
-            window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_VISIBLE
-            showMenu()
-        } else super.onBackPressed()
+        if (!padActive) { super.onBackPressed(); return }
+        if (editing) { showMenu(); return }
+        val now = System.currentTimeMillis()
+        if (now - lastBack < 2000) showMenu()
+        else {
+            lastBack = now
+            Toast.makeText(this, "Press back again to exit", Toast.LENGTH_SHORT).show()
+        }
     }
 }
 
-class PadView(c: Context, val cfg: Cfg) : View(c) {
-    class Btn(val t: String, val x: Float, val y: Float, val r: Float, val m: Int)
+class PadView(c: Context, val cfg: Cfg, val prefs: SharedPreferences, val edit: Boolean) : View(c) {
+    class Btn(val id: String, val t: String, var x: Float, var y: Float, val r: Float, val m: Int)
 
     private val ex = Executors.newSingleThreadExecutor()
     private val sock = DatagramSocket().apply { broadcast = true }
@@ -116,55 +162,58 @@ class PadView(c: Context, val cfg: Cfg) : View(c) {
     private var lid = -1
     private var rid = -1
     private var mask = 0
+    private var dragId: String? = null
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
 
     init {
-        if (!auto) Thread {
-            try { target = InetAddress.getByName(cfg.ip) } catch (_: Exception) {}
-        }.start()
+        if (!edit) {
+            if (!auto) Thread {
+                try { target = InetAddress.getByName(cfg.ip) } catch (_: Exception) {}
+            }.start()
 
-        Thread {
-            val buf = ByteArray(64)
-            while (alive) {
-                try {
-                    val pk = DatagramPacket(buf, buf.size)
-                    sock.receive(pk)
-                    val msg = String(pk.data, 0, pk.length)
-                    if (msg.startsWith("XPAD_HERE")) {
-                        lastPong = System.currentTimeMillis()
-                        if (auto) target = pk.address
-                    } else if (msg.startsWith("PONG")) {
-                        lastPong = System.currentTimeMillis()
-                    }
-                } catch (_: Exception) {
-                    if (!alive) break
-                }
-            }
-        }.start()
-
-        Thread {
-            val ping = "PING".toByteArray()
-            val disc = "XPAD_DISCOVER".toByteArray()
-            while (alive) {
-                try {
-                    val now = System.currentTimeMillis()
-                    if (auto && now - lastPong > 4000) target = null
-                    val t = target
-                    if (t == null) {
-                        if (auto) sock.send(DatagramPacket(disc, disc.size, InetAddress.getByName("255.255.255.255"), 5005))
-                    } else {
-                        sock.send(DatagramPacket(ping, ping.size, t, 5005))
-                        val lm = last
-                        if (lm.isNotEmpty()) {
-                            val b = lm.toByteArray()
-                            sock.send(DatagramPacket(b, b.size, t, 5005))
+            Thread {
+                val buf = ByteArray(64)
+                while (alive) {
+                    try {
+                        val pk = DatagramPacket(buf, buf.size)
+                        sock.receive(pk)
+                        val msg = String(pk.data, 0, pk.length)
+                        if (msg.startsWith("XPAD_HERE")) {
+                            lastPong = System.currentTimeMillis()
+                            if (auto) target = pk.address
+                        } else if (msg.startsWith("PONG")) {
+                            lastPong = System.currentTimeMillis()
                         }
+                    } catch (_: Exception) {
+                        if (!alive) break
                     }
-                } catch (_: Exception) {}
-                postInvalidate()
-                try { Thread.sleep(1000) } catch (_: Exception) {}
-            }
-        }.start()
+                }
+            }.start()
+
+            Thread {
+                val ping = "PING".toByteArray()
+                val disc = "XPAD_DISCOVER".toByteArray()
+                while (alive) {
+                    try {
+                        val now = System.currentTimeMillis()
+                        if (auto && now - lastPong > 4000) target = null
+                        val t = target
+                        if (t == null) {
+                            if (auto) sock.send(DatagramPacket(disc, disc.size, InetAddress.getByName("255.255.255.255"), 5005))
+                        } else {
+                            sock.send(DatagramPacket(ping, ping.size, t, 5005))
+                            val lm = last
+                            if (lm.isNotEmpty()) {
+                                val b = lm.toByteArray()
+                                sock.send(DatagramPacket(b, b.size, t, 5005))
+                            }
+                        }
+                    } catch (_: Exception) {}
+                    postInvalidate()
+                    try { Thread.sleep(1000) } catch (_: Exception) {}
+                }
+            }.start()
+        }
     }
 
     override fun onDetachedFromWindow() {
@@ -188,26 +237,45 @@ class PadView(c: Context, val cfg: Cfg) : View(c) {
 
     override fun onSizeChanged(w: Int, h: Int, a: Int, b: Int) {
         w0 = w; h0 = h
+        if (Build.VERSION.SDK_INT >= 29) systemGestureExclusionRects = listOf(Rect(0, 0, w, h))
         fun fx(f: Float): Float = if (cfg.lefty) w * (1f - f) else w * f
         sr = h * 0.2f * cfg.scale
         dlcx = fx(0.12f); dlcy = h * 0.68f
         drcx = fx(0.62f); drcy = h * 0.68f
-        lcx = dlcx; lcy = dlcy; rcx = drcx; rcy = drcy
-        lkx = lcx; lky = lcy; rkx = rcx; rky = rcy
         val r = h * 0.09f * cfg.scale
         val ax = fx(0.87f); val ay = h * 0.62f; val d = r * 1.7f
         val dx = fx(0.36f); val dy = h * 0.70f; val dr = r * 0.8f; val dd = dr * 1.9f
         btns = listOf(
-            Btn("A", ax, ay + d, r, 0x1000), Btn("B", ax + d, ay, r, 0x2000),
-            Btn("X", ax - d, ay, r, 0x4000), Btn("Y", ax, ay - d, r, 0x8000),
-            Btn("LB", fx(0.10f), h * 0.12f, r, 0x0100), Btn("RB", fx(0.90f), h * 0.12f, r, 0x0200),
-            Btn("LT", fx(0.24f), h * 0.12f, r, 0x10000), Btn("RT", fx(0.76f), h * 0.12f, r, 0x20000),
-            Btn("<", fx(0.42f), h * 0.12f, r * 0.8f, 0x0020), Btn(">", fx(0.58f), h * 0.12f, r * 0.8f, 0x0010),
-            Btn("LS", fx(0.12f), h * 0.30f, r * 0.8f, 0x0040),
-            Btn("RS", fx(0.62f), h * 0.30f, r * 0.8f, 0x0080),
-            Btn("^", dx, dy - dd, dr, 0x0001), Btn("v", dx, dy + dd, dr, 0x0002),
-            Btn("<", dx - dd, dy, dr, 0x0004), Btn(">", dx + dd, dy, dr, 0x0008)
+            Btn("A", "A", ax, ay + d, r, 0x1000), Btn("B", "B", ax + d, ay, r, 0x2000),
+            Btn("X", "X", ax - d, ay, r, 0x4000), Btn("Y", "Y", ax, ay - d, r, 0x8000),
+            Btn("LB", "LB", fx(0.10f), h * 0.12f, r, 0x0100), Btn("RB", "RB", fx(0.90f), h * 0.12f, r, 0x0200),
+            Btn("LT", "LT", fx(0.24f), h * 0.12f, r, 0x10000), Btn("RT", "RT", fx(0.76f), h * 0.12f, r, 0x20000),
+            Btn("BACK", "<", fx(0.42f), h * 0.12f, r * 0.8f, 0x0020), Btn("START", ">", fx(0.58f), h * 0.12f, r * 0.8f, 0x0010),
+            Btn("LSB", "LS", fx(0.12f), h * 0.30f, r * 0.8f, 0x0040),
+            Btn("RSB", "RS", fx(0.62f), h * 0.30f, r * 0.8f, 0x0080),
+            Btn("DU", "^", dx, dy - dd, dr, 0x0001), Btn("DD", "v", dx, dy + dd, dr, 0x0002),
+            Btn("DL", "<", dx - dd, dy, dr, 0x0004), Btn("DR", ">", dx + dd, dy, dr, 0x0008)
         )
+        loadLayout(w, h)
+        lcx = dlcx; lcy = dlcy; rcx = drcx; rcy = drcy
+        lkx = lcx; lky = lcy; rkx = rcx; rky = rcy
+    }
+
+    private fun loadLayout(w: Int, h: Int) {
+        fun saved(id: String): Pair<Float, Float>? {
+            val s = prefs.getString("lay_$id", null) ?: return null
+            val parts = s.split(";")
+            val fx = parts.getOrNull(0)?.toFloatOrNull() ?: return null
+            val fy = parts.getOrNull(1)?.toFloatOrNull() ?: return null
+            return Pair(fx * w, fy * h)
+        }
+        for (b in btns) saved(b.id)?.let { b.x = it.first; b.y = it.second }
+        saved("LST")?.let { dlcx = it.first; dlcy = it.second }
+        saved("RST")?.let { drcx = it.first; drcy = it.second }
+    }
+
+    private fun saveOne(id: String, x: Float, y: Float) {
+        prefs.edit().putString("lay_$id", "${x / w0};${y / h0}").apply()
     }
 
     private fun baseColor(m: Int): Int = when (m) {
@@ -245,6 +313,11 @@ class PadView(c: Context, val cfg: Cfg) : View(c) {
             p.color = withAlpha(if (b.m == 0x8000) Color.BLACK else Color.WHITE)
             c.drawText(b.t, b.x, b.y + 12f, p)
         }
+        if (edit) {
+            p.textSize = 30f; p.color = Color.rgb(240, 200, 60)
+            c.drawText("Drag to move  -  Back to save and exit", w0 * 0.5f, h0 * 0.27f, p)
+            return
+        }
         val ok = System.currentTimeMillis() - lastPong < 3000
         val searching = auto && target == null
         p.color = if (ok) Color.rgb(60, 200, 90) else if (searching) Color.rgb(240, 170, 40) else Color.rgb(220, 60, 50)
@@ -263,7 +336,53 @@ class PadView(c: Context, val cfg: Cfg) : View(c) {
         return f > 0.48f && f < 0.74f && y > h0 * 0.42f
     }
 
+    private fun moveDrag(x0: Float, y0: Float) {
+        val id = dragId ?: return
+        val x = x0.coerceIn(0f, w0.toFloat()); val y = y0.coerceIn(0f, h0.toFloat())
+        if (id == "LST") {
+            dlcx = x; dlcy = y; lcx = x; lcy = y; lkx = x; lky = y
+        } else if (id == "RST") {
+            drcx = x; drcy = y; rcx = x; rcy = y; rkx = x; rky = y
+        } else {
+            for (b in btns) if (b.id == id) { b.x = x; b.y = y }
+        }
+    }
+
+    private fun editTouch(e: MotionEvent): Boolean {
+        val x = e.x; val y = e.y
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                dragId = null
+                var best = Float.MAX_VALUE
+                for (b in btns) {
+                    val d = dist(x, y, b.x, b.y)
+                    if (d < b.r * 1.5f && d < best) { best = d; dragId = b.id }
+                }
+                if (dragId == null) {
+                    if (dist(x, y, dlcx, dlcy) < sr) dragId = "LST"
+                    else if (dist(x, y, drcx, drcy) < sr) dragId = "RST"
+                }
+            }
+            MotionEvent.ACTION_MOVE -> moveDrag(x, y)
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                moveDrag(x, y)
+                val id = dragId
+                if (id != null) {
+                    when (id) {
+                        "LST" -> saveOne(id, dlcx, dlcy)
+                        "RST" -> saveOne(id, drcx, drcy)
+                        else -> for (b in btns) if (b.id == id) saveOne(id, b.x, b.y)
+                    }
+                }
+                dragId = null
+            }
+        }
+        invalidate()
+        return true
+    }
+
     override fun onTouchEvent(e: MotionEvent): Boolean {
+        if (edit) return editTouch(e)
         val act = e.actionMasked
         if (act == MotionEvent.ACTION_DOWN || act == MotionEvent.ACTION_POINTER_DOWN) {
             val i = e.actionIndex
