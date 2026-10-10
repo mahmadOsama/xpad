@@ -71,17 +71,37 @@ class PadView(c: Context, val ip: String, val slot: Int) : View(c) {
         )
     }
 
+    private fun baseColor(m: Int): Int = when (m) {
+        0x1000 -> Color.rgb(107, 190, 70)
+        0x2000 -> Color.rgb(222, 61, 54)
+        0x4000 -> Color.rgb(40, 140, 220)
+        0x8000 -> Color.rgb(247, 200, 28)
+        else -> Color.rgb(70, 70, 70)
+    }
+
+    private fun lighten(c: Int): Int =
+        Color.rgb((Color.red(c) + 255) / 2, (Color.green(c) + 255) / 2, (Color.blue(c) + 255) / 2)
+
     override fun onDraw(c: Canvas) {
         c.drawColor(Color.rgb(17, 17, 17))
-        p.color = Color.rgb(50, 50, 50)
+        p.style = Paint.Style.FILL
+        p.color = Color.rgb(40, 40, 40)
         c.drawCircle(lcx, lcy, sr, p); c.drawCircle(rcx, rcy, sr, p)
-        p.color = Color.GRAY
+        p.style = Paint.Style.STROKE; p.strokeWidth = 6f; p.color = Color.rgb(90, 90, 90)
+        c.drawCircle(lcx, lcy, sr, p); c.drawCircle(rcx, rcy, sr, p)
+        p.style = Paint.Style.FILL; p.color = Color.rgb(130, 130, 130)
         c.drawCircle(lkx, lky, sr * 0.4f, p); c.drawCircle(rkx, rky, sr * 0.4f, p)
         p.textSize = 36f; p.textAlign = Paint.Align.CENTER
         for (b in btns) {
-            p.color = if ((mask and b.m) != 0) Color.rgb(0, 150, 90) else Color.rgb(70, 70, 70)
-            c.drawCircle(b.x, b.y, b.r, p)
-            p.color = Color.WHITE; c.drawText(b.t, b.x, b.y + 12f, p)
+            val on = (mask and b.m) != 0
+            var col = baseColor(b.m)
+            if (on) col = lighten(col)
+            p.color = col
+            val shoulder = b.m == 0x0100 || b.m == 0x0200 || b.m == 0x10000 || b.m == 0x20000
+            if (shoulder) c.drawRoundRect(b.x - b.r * 1.2f, b.y - b.r * 0.6f, b.x + b.r * 1.2f, b.y + b.r * 0.6f, 24f, 24f, p)
+            else c.drawCircle(b.x, b.y, b.r, p)
+            p.color = if (b.m == 0x8000) Color.BLACK else Color.WHITE
+            c.drawText(b.t, b.x, b.y + 12f, p)
         }
     }
 
