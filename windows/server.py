@@ -9,11 +9,27 @@ for p in pads:
     p.update()
 
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+try:
+    s.ioctl(socket.SIO_UDP_CONNRESET, False)  # Windows: ignore "port unreachable" errors
+except Exception:
+    pass
 s.bind(("0.0.0.0", 5005))
-print(f"Ready with {N} pads. Phones connect to this PC's IP, port 5005.")
+print(f"Ready with {N} pads. Phones find this PC automatically (or use its IP, port 5005).")
 
 while True:
-    d, _ = s.recvfrom(256)
+    try:
+        d, addr = s.recvfrom(256)
+    except ConnectionResetError:
+        continue
+    try:
+        if d.startswith(b"XPAD_DISCOVER"):
+            s.sendto(b"XPAD_HERE", addr)
+            continue
+        if d.startswith(b"PING"):
+            s.sendto(b"PONG", addr)
+            continue
+    except OSError:
+        continue
     try:
         slot, m, lx, ly, rx, ry = d.decode().strip().split(";")
         p = pads[int(slot) - 1]; m = int(m)
