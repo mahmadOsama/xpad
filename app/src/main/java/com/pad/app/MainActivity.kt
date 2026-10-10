@@ -29,6 +29,15 @@ class MainActivity : AppCompatActivity() {
     private var editing = false
     private var lastBack = 0L
 
+    private val allItems = listOf(
+        "A" to "A", "B" to "B", "X" to "X", "Y" to "Y",
+        "LB" to "LB", "RB" to "RB", "LT" to "LT", "RT" to "RT",
+        "BACK" to "Back (<)", "START" to "Start (>)",
+        "LSB" to "Left stick click (LS)", "RSB" to "Right stick click (RS)",
+        "DU" to "D-pad up", "DD" to "D-pad down", "DL" to "D-pad left", "DR" to "D-pad right",
+        "LST" to "Left stick", "RST" to "Right stick"
+    )
+
     override fun onCreate(s: Bundle?) {
         super.onCreate(s)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -86,6 +95,7 @@ class MainActivity : AppCompatActivity() {
         val go = Button(this).apply { text = "Connect" }
         val editBtn = Button(this).apply { text = "Edit layout (drag buttons)" }
         val resetBtn = Button(this).apply { text = "Reset layout" }
+        val offBtn = Button(this).apply { text = "Enable / disable buttons" }
 
         val col = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -96,7 +106,7 @@ class MainActivity : AppCompatActivity() {
             addView(label("Opacity")); addView(opac)
             addView(label("Stick dead zone")); addView(dead)
             addView(vib); addView(lefty); addView(floating)
-            addView(go); addView(editBtn); addView(resetBtn)
+            addView(go); addView(editBtn); addView(offBtn); addView(resetBtn)
         }
         setContentView(ScrollView(this).apply { addView(col) })
 
@@ -115,6 +125,19 @@ class MainActivity : AppCompatActivity() {
         }
 
         go.setOnClickListener { startPad(commit(), false) }
+        offBtn.setOnClickListener {
+            val off = HashSet<String>(prefs.getStringSet("off", null) ?: emptySet())
+            val names = allItems.map { it.second }.toTypedArray()
+            val checked = BooleanArray(allItems.size) { allItems[it].first !in off }
+            androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("Checked = enabled")
+                .setMultiChoiceItems(names, checked) { _, which, isChecked ->
+                    if (isChecked) off.remove(allItems[which].first) else off.add(allItems[which].first)
+                }
+                .setPositiveButton("Save") { _, _ -> prefs.edit().putStringSet("off", off).apply() }
+                .setNegativeButton("Cancel", null)
+                .show()
+        }
         editBtn.setOnClickListener { startPad(commit(), true) }
         resetBtn.setOnClickListener {
             val ed = prefs.edit()
@@ -163,6 +186,7 @@ class PadView(c: Context, val cfg: Cfg, val prefs: SharedPreferences, val edit: 
     private var rid = -1
     private var mask = 0
     private var dragId: String? = null
+    private val off: Set<String> = HashSet<String>(prefs.getStringSet("off", null) ?: emptySet())
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
 
     init {
@@ -289,28 +313,39 @@ class PadView(c: Context, val cfg: Cfg, val prefs: SharedPreferences, val edit: 
     private fun lighten(c: Int): Int =
         Color.rgb((Color.red(c) + 255) / 2, (Color.green(c) + 255) / 2, (Color.blue(c) + 255) / 2)
 
-    private fun withAlpha(c: Int): Int =
-        Color.argb((255 * cfg.alpha).toInt(), Color.red(c), Color.green(c), Color.blue(c))
+    private fun withAlpha(c: Int, k: Float = 1f): Int =
+        Color.argb((255 * cfg.alpha * k).toInt(), Color.red(c), Color.green(c), Color.blue(c))
+
+    private fun drawStick(c: Canvas, cx: Float, cy: Float, kx: Float, ky: Float, disabled: Boolean) {
+        if (disabled && !edit) return
+        val k = if (disabled) 0.25f else 1f
+        p.style = Paint.Style.FILL
+        p.color = withAlpha(Color.rgb(40, 40, 40), k)
+        c.drawCircle(cx, cy, sr, p)
+        p.style = Paint.Style.STROKE; p.strokeWidth = 6f; p.color = withAlpha(Color.rgb(90, 90, 90), k)
+        c.drawCircle(cx, cy, sr, p)
+        p.style = Paint.Style.FILL; p.color = withAlpha(Color.rgb(130, 130, 130), k)
+        c.drawCircle(kx, ky, sr * 0.4f, p)
+    }
 
     override fun onDraw(c: Canvas) {
         c.drawColor(Color.rgb(17, 17, 17))
+        drawStick(c, lcx, lcy, lkx, lky, "LST" in off)
+        drawStick(c, rcx, rcy, rkx, rky, "RST" in off)
         p.style = Paint.Style.FILL
-        p.color = withAlpha(Color.rgb(40, 40, 40))
-        c.drawCircle(lcx, lcy, sr, p); c.drawCircle(rcx, rcy, sr, p)
-        p.style = Paint.Style.STROKE; p.strokeWidth = 6f; p.color = withAlpha(Color.rgb(90, 90, 90))
-        c.drawCircle(lcx, lcy, sr, p); c.drawCircle(rcx, rcy, sr, p)
-        p.style = Paint.Style.FILL; p.color = withAlpha(Color.rgb(130, 130, 130))
-        c.drawCircle(lkx, lky, sr * 0.4f, p); c.drawCircle(rkx, rky, sr * 0.4f, p)
         p.textSize = 36f; p.textAlign = Paint.Align.CENTER
         for (b in btns) {
+            val dis = b.id in off
+            if (dis && !edit) continue
+            val k = if (dis) 0.25f else 1f
             val on = (mask and b.m) != 0
             var col = baseColor(b.m)
             if (on) col = lighten(col)
-            p.color = withAlpha(col)
+            p.color = withAlpha(col, k)
             val shoulder = b.m == 0x0100 || b.m == 0x0200 || b.m == 0x10000 || b.m == 0x20000
             if (shoulder) c.drawRoundRect(b.x - b.r * 1.2f, b.y - b.r * 0.6f, b.x + b.r * 1.2f, b.y + b.r * 0.6f, 24f, 24f, p)
             else c.drawCircle(b.x, b.y, b.r, p)
-            p.color = withAlpha(if (b.m == 0x8000) Color.BLACK else Color.WHITE)
+            p.color = withAlpha(if (b.m == 0x8000) Color.BLACK else Color.WHITE, k)
             c.drawText(b.t, b.x, b.y + 12f, p)
         }
         if (edit) {
@@ -356,11 +391,11 @@ class PadView(c: Context, val cfg: Cfg, val prefs: SharedPreferences, val edit: 
                 var best = Float.MAX_VALUE
                 for (b in btns) {
                     val d = dist(x, y, b.x, b.y)
-                    if (d < b.r * 1.5f && d < best) { best = d; dragId = b.id }
+                    if (b.id !in off && d < b.r * 1.5f && d < best) { best = d; dragId = b.id }
                 }
                 if (dragId == null) {
-                    if (dist(x, y, dlcx, dlcy) < sr) dragId = "LST"
-                    else if (dist(x, y, drcx, drcy) < sr) dragId = "RST"
+                    if ("LST" !in off && dist(x, y, dlcx, dlcy) < sr) dragId = "LST"
+                    else if ("RST" !in off && dist(x, y, drcx, drcy) < sr) dragId = "RST"
                 }
             }
             MotionEvent.ACTION_MOVE -> moveDrag(x, y)
@@ -388,14 +423,14 @@ class PadView(c: Context, val cfg: Cfg, val prefs: SharedPreferences, val edit: 
             val i = e.actionIndex
             val x = e.getX(i); val y = e.getY(i); val id = e.getPointerId(i)
             if (cfg.floating) {
-                if (lid == -1 && inLeftZone(x, y)) {
+                if (lid == -1 && "LST" !in off && inLeftZone(x, y)) {
                     lid = id; lcx = x.coerceIn(sr, w0 - sr); lcy = y.coerceIn(sr, h0 - sr)
-                } else if (rid == -1 && inRightZone(x, y)) {
+                } else if (rid == -1 && "RST" !in off && inRightZone(x, y)) {
                     rid = id; rcx = x.coerceIn(sr, w0 - sr); rcy = y.coerceIn(sr, h0 - sr)
                 }
             } else {
-                if (lid == -1 && dist(x, y, lcx, lcy) < sr * 1.4f) lid = id
-                else if (rid == -1 && dist(x, y, rcx, rcy) < sr * 1.4f) rid = id
+                if (lid == -1 && "LST" !in off && dist(x, y, lcx, lcy) < sr * 1.4f) lid = id
+                else if (rid == -1 && "RST" !in off && dist(x, y, rcx, rcy) < sr * 1.4f) rid = id
             }
         }
         val up = act == MotionEvent.ACTION_UP || act == MotionEvent.ACTION_CANCEL
@@ -436,7 +471,7 @@ class PadView(c: Context, val cfg: Cfg, val prefs: SharedPreferences, val edit: 
                     rx = nx * sc; ry = -ny * sc
                 }
             } else for (b in btns)
-                if (dist(x, y, b.x, b.y) < b.r * 1.3f) m = m or b.m
+                if (b.id !in off && dist(x, y, b.x, b.y) < b.r * 1.3f) m = m or b.m
         }
         val newly = m and mask.inv()
         if (newly != 0 && cfg.vib) buzz()
